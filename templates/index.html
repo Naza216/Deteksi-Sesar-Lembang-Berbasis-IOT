@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sesar Lembang | Early Warning System</title>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <!-- Leaflet Map -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+  </script>
+
+  <style>
+  :root {
+    --bg-dark: #020617;
+    --sidebar-bg: #020617;
+    --card-bg: #0b1120;
+    --card-elevated: #020617;
+    --accent-blue: #38bdf8;
+    --accent-pink: #f973a1;
+    --text-main: #e5e7eb;
+    --text-dim: #9ca3af;
+    --success: #22c55e;
+    --danger: #f97373;
+    --border-subtle: rgba(148, 163, 184, 0.25);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+    background: radial-gradient(circle at top, #0b1120 0, #020617 45%, #000 100%);
+    color: var(--text-main);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* SIDEBAR ------------------------------------------------------ */
+
+  .sidebar {
+    width: 260px;
+    background: linear-gradient(180deg, #020617 0%, #020617 50%, #020617 100%);
+    padding: 24px 22px;
+    border-right: 1px solid rgba(15, 23, 42, 0.9);
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.95);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 10;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 36px;
+  }
+
+  .brand-logo {
+    background: radial-gradient(circle at 30% 20%, #38bdf8, #0ea5e9);
+    padding: 10px 12px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: white;
+    box-shadow: 0 10px 30px rgba(56, 189, 248, 0.55);
+  }
+
+  .brand-title {
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+
+  .brand-subtitle {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+
+  .nav-menu {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 24px 0;
+    flex-grow: 1;
+  }
+
+  .nav-item {
+    padding: 10px 14px;
+    cursor: pointer;
+    border-radius: 999px;
+    color: var(--text-dim);
+    transition: 0.18s ease-out;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.9rem;
+  }
+
+  .nav-item i {
+    font-size: 0.9rem;
+  }
+
+  .nav-item.active {
+    background: radial-gradient(circle at 0 0, rgba(56, 189, 248, 0.25), transparent 60%);
+    color: var(--accent-blue);
+    box-shadow: 0 12px 25px rgba(15, 23, 42, 0.9);
+  }
+
+  .nav-item:hover {
+    background-color: rgba(30, 64, 175, 0.35);
+    color: var(--text-main);
+    transform: translateY(-1px);
+  }
+
+  .sidebar-footer {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .btn {
+    padding: 11px 12px;
+    border: none;
+    border-radius: 999px;
+    font-weight: 600;
+    cursor: pointer;
+    color: white;
+    transition: 0.18s ease-out;
+    font-size: 0.85rem;
+  }
+
+  .btn-test-on {
+    background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+    box-shadow: 0 10px 30px rgba(56, 189, 248, 0.4);
+  }
+
+  .btn-test-on:hover {
+    filter: brightness(1.08);
+    transform: translateY(-1px);
+  }
+
+  .btn-shutdown {
+    background: linear-gradient(135deg, #f97373, #fb7185);
+    box-shadow: 0 10px 30px rgba(248, 113, 113, 0.4);
+  }
+
+  .btn-shutdown:hover {
+    filter: brightness(1.05);
+    transform: translateY(-1px);
+  }
+
+  /* MAIN CONTENT ------------------------------------------------- */
+
+  .main-content {
+    flex: 1;
+    padding: 26px 32px 26px 28px;
+    overflow-y: auto;
+  }
+
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 22px;
+  }
+
+  .header h1 {
+    margin: 0;
+    font-size: 1.4rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .conn-badge {
+    color: var(--success);
+    background: rgba(22, 163, 74, 0.12);
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    border: 1px solid rgba(22, 163, 74, 0.35);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .conn-badge i {
+    font-size: 7px;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+
+  .card {
+    background: radial-gradient(circle at top left, #111827 0, #020617 55%);
+    padding: 18px 18px 16px 18px;
+    border-radius: 18px;
+    border: 1px solid var(--border-subtle);
+    transition: 0.18s ease-out;
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.9);
+  }
+
+  .card:hover {
+    border-color: rgba(148, 163, 184, 0.55);
+    transform: translateY(-1px);
+  }
+
+  .card-label {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+  }
+
+  .card-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+  }
+
+  .chart-box {
+    background: radial-gradient(circle at top, #020617, #020617 70%, #000 120%);
+    padding: 20px 20px 18px 20px;
+    border-radius: 18px;
+    border: 1px solid var(--border-subtle);
+    margin-bottom: 22px;
+    box-shadow: 0 24px 50px rgba(15, 23, 42, 0.95);
+  }
+
+  .chart-container {
+    height: 310px;
+    width: 100%;
+  }
+
+  .inference-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.2fr;
+    gap: 16px;
+  }
+
+  .inf-box {
+    background: linear-gradient(145deg, #020617, #020617);
+    padding: 18px 18px 16px 18px;
+    border-radius: 16px;
+    border: 1px solid var(--border-subtle);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .inf-box::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    border-left: 3px solid rgba(56, 189, 248, 0.7);
+    opacity: 0.7;
+    pointer-events: none;
+  }
+
+  .inf-box strong {
+    font-size: 0.94rem;
+  }
+
+  /* table events */
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    padding: 7px 6px;
+    font-size: 0.82rem;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  thead tr {
+    color: var(--text-dim);
+    border-bottom: 1px solid rgba(55, 65, 81, 0.9);
+  }
+
+  tbody tr:nth-child(even) {
+    background-color: #020617;
+  }
+  .charts-grid {
+  display: grid;
+  grid-template-columns: 2fr 1.4fr;
+  grid-template-rows: auto auto;
+  gap: 18px;
+  margin-bottom: 24px;
+}
+
+.chart-box--wide {
+  grid-column: 1 / -1;
+}
+
+  tbody tr:nth-child(odd) {
+    background-color: #020617;
+  }
+
+  tbody tr:hover {
+    background-color: #0b1120;
+  }
+
+  /* MAP */
+
+  .map-card {
+    background: radial-gradient(circle at top left, #020617 0, #020617 70%, #000 120%);
+    padding: 18px 18px 16px 18px;
+    border-radius: 18px;
+    border: 1px solid var(--border-subtle);
+    box-shadow: 0 24px 50px rgba(15, 23, 42, 0.95);
+  }
+
+  .map-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .map-subtitle {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+
+  #map {
+    width: 100%;
+    height: 320px;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  }
+
+  /* footer time */
+
+  #time {
+    text-align: right;
+    margin-top: 16px;
+    font-size: 0.68rem;
+    color: var(--text-dim);
+  }
+</style>
+
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">SG</div>
+      <div>
+        <div style="font-weight: bold;">Deteksi Gempa</div>
+        <div style="font-size: 0.75rem; color: var(--text-dim);">Sesar Lembang</div>
+      </div>
+    </div>
+    <ul class="nav-menu">
+      <li class="nav-item active"><i class="fas fa-th-large"></i> Overview</li>
+      <li class="nav-item"><i class="fas fa-history"></i> Events</li>
+      <li class="nav-item"><i class="fas fa-map-marked-alt"></i> Maps</li>
+    </ul>
+
+    <div class="sidebar-footer">
+      <button class="btn btn-test-on"
+              onclick="sendControlCommand('TEST_ON')">Test On</button>
+      <button class="btn btn-test-on" style="background-color:#0ea5e9;"
+              onclick="sendControlCommand('TEST_OFF')">Test Off</button>
+      <button class="btn btn-shutdown"
+              onclick="sendControlCommand('SHUTDOWN')">Shutdown</button>
+    </div>
+  </nav>
+
+  <main class="main-content">
+    <header class="header">
+      <div><h1 style="margin: 0; font-size: 1.5rem;">Overview</h1></div>
+      <div id="conn-badge"
+           style="color: var(--success); background: rgba(16, 185, 129, 0.1); padding: 4px 12px; border-radius: 20px;">
+        <i class="fas fa-circle" style="font-size: 8px;"></i> Connected
+      </div>
+    </header>
+
+    <!-- SECTION OVERVIEW -->
+    <section id="overviewSection">
+      <section class="stats-grid">
+        <div class="card">
+          <div class="card-label">Sensors</div>
+          <div class="card-value">1</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Magnitude (g)</div>
+          <div class="card-value" id="magnitude">0.00</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Status</div>
+          <div class="card-value" id="statusTitle">NORMAL</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Kedalaman</div>
+          <div class="card-value" id="kedalaman">0 km</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Koordinat</div>
+          <div class="card-value" id="koordinat" style="font-size: 1rem;">-</div>
+        </div>
+      </section>
+
+      <section class="chart-box">
+        <div class="chart-container">
+          <canvas id="magnitudeChart"></canvas>
+        </div>
+      </section>
+
+      <!-- 3 kotak: kekuatan, analisis, prediksi susulan -->
+      <section class="inference-grid">
+        <div class="inf-box">
+          <div class="card-label">Kekuatan</div>
+          <div id="deskripsiKekuatan" style="font-weight: bold;">Normal</div>
+        </div>
+        <div class="inf-box">
+          <div class="card-label">Analisis</div>
+          <div id="deskripsiPergerakan" style="font-weight: bold;">Stabil</div>
+        </div>
+        <div class="inf-box" id="aftershockBox">
+          <div class="card-label">Prediksi Gempa Susulan</div>
+          <div id="aftershockLevel" style="font-weight:bold;">-</div>
+          <div id="aftershockText"
+               style="font-size:0.8rem; margin-top:4px; color:var(--text-dim);">
+            Menunggu data...
+          </div>
+        </div>
+      </section>
+      <section class="charts-grid">
+  <div class="chart-box chart-box--wide">
+    <div class="card-label">Magnitude & Deviation</div>
+    <div class="chart-container">
+      <canvas id="magnitudeChart"></canvas>
+    </div>
+  </div>
+
+  <div class="chart-box">
+    <div class="card-label">Distribusi Status (1 jam)</div>
+    <div class="chart-container" style="height:220px">
+      <canvas id="statusBarChart"></canvas>
+    </div>
+  </div>
+
+  <div class="chart-box">
+    <div class="card-label">Deviation |g - 1|</div>
+    <div class="chart-container" style="height:220px">
+      <canvas id="deviationChart"></canvas>
+    </div>
+  </div>
+</section>
+
+
+      <div style="text-align: right; margin-top: 20px; font-size: 0.7rem; color: var(--text-dim);" id="time">
+        Terakhir diperbarui: -
+      </div>
+    </section>
+
+    <!-- SECTION EVENTS -->
+    <section id="eventsSection" style="display:none; margin-top:32px;">
+      <h2 style="margin-bottom:12px; font-size:1.1rem;">Riwayat Goncangan</h2>
+      <div class="card" style="padding:16px; overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Waktu</th>
+              <th>Magnitude (g)</th>
+              <th>Deviation</th>
+              <th>Status</th>
+              <th>Kedalaman</th>
+              <th>Koordinat</th>
+            </tr>
+          </thead>
+          <tbody id="eventsContainer"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION MAPS -->
+    <section id="mapsSection" style="display:none; margin-top:32px;">
+      <h2 style="margin-bottom:12px; font-size:1.1rem;">Lokasi Sensor</h2>
+      <div class="map-card">
+        <div class="map-header">
+          <div>
+            <div class="card-label">Simulasi Peta</div>
+            <div style="font-weight:600;">ITENAS, Bandung</div>
+          </div>
+          <div class="map-subtitle">Posisi tetap untuk demo</div>
+        </div>
+        <div id="map"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

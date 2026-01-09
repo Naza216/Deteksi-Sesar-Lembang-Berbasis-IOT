@@ -1,87 +1,94 @@
-from flask import Flask, jsonify
-from flask import request, jsonify
+from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 import mysql.connector
 import paho.mqtt.client as mqtt_client
+import uuid
 from datetime import datetime, timedelta
-import time # Diperlukan untuk fungsi reconnect DB
 
 # =======================================================
-# 1. KONFIGURASI FLASK & CORS
+# 1. KONFIGURASI
 # =======================================================
 app = Flask(__name__)
-CORS(app) # Mengizinkan frontend di domain lain untuk mengakses API ini
+CORS(app)
 
-# =======================================================
-# 2. KONFIGURASI DATABASE & MQTT
-# =======================================================
+@app.route("/")
+def dashboard():
+    return render_template("index.html")
+
 DB_CONFIG = {
-    'host': 'localhost',
-    'user': 'root', 
-    'password': 'root', 
-    'database': 'iot_sesar' 
+    "host": "localhost",
+    "user": "root",
+    "password": "root",        # sesuaikan dengan Laragon
+    "database": "iot_sesar"
 }
 
 MQTT_BROKER = "broker.emqx.io"
 MQTT_PORT = 1883
 MQTT_TOPIC_CONTROL = "/lembang/control/actuator"
-CLIENT_ID_PUBLISHER = "Frontend_API_Publisher"
+CLIENT_ID_PUBLISHER = f"Lembang_Publisher_{uuid.uuid4().hex[:6]}"
+
+# posisi tetap sensor (ganti dengan koordinat lokasi sensor-mu)
+DEFAULT_COORD = "-6.8320, 107.6170"
 
 # =======================================================
-# 3. FUNGSI INFERENSI (Menambahkan Deskripsi Deskriptif)
+# 2. FUNGSI INFERENSI + ESTIMASI
 # =======================================================
+def estimate_depth_km(magnitude_g, deviation):
+    mag = magnitude_g or 0.0
+    dev = deviation or 0.0
+
+    if dev >= 0.4:
+        return 5     # dangkal
+    elif dev >= 0.25:
+        return 10    # menengah
+    elif dev >= 0.15:
+        return 20    # agak dalam
+    else:
+        return 30    # dalam
 
 def infer_descriptions(reading):
-    """Menambahkan deskripsi inferensi berdasarkan data percepatan (g)."""
+    """Menambahkan deskripsi inferensi dengan pengamanan data NULL."""
     if reading is None:
         return {}
 
-    deviation = reading.get('deviation', 0.0)
-    acx = reading.get('acx_g', 0.0)
-    acy = reading.get('acy_g', 0.0)
-    acz = reading.get('acz_g', 0.0)
-    
-    # --- Penentuan Status Akhir (Hanya NORMAL atau WARNING) ---
+    deviation = reading.get("deviation") if reading.get("deviation") is not None else 0.0
+    acx = reading.get("acx_g") if reading.get("acx_g") is not None else 0.0
+    acy = reading.get("acy_g") if reading.get("acy_g") is not None else 0.0
+    acz = reading.get("acz_g") if reading.get("acz_g") is not None else 1.0  # gravitasi
+
     status_db = "NORMAL"
-    if deviation >= 0.15:
+    if deviation >= 0.20:
+        status_db = "ALERT"
+    if deviation >= 0.35:
         status_db = "WARNING"
-        
-    # --- 1. Kekuatan Goncangan (Deskriptif) ---
+
+    # 1. Kekuatan Goncangan
     if deviation >= 0.40:
-        kekuatan = "Goncangan Keras (Kuat dan Jelas Terasa, Berpotensi merusak)."
+        kekuatan = "Goncangan Keras (Berpotensi merusak)."
     elif deviation >= 0.15:
-        kekuatan = "Goncangan Sedang (Terasa, perabotan bergetar, perlu waspada)."
+        kekuatan = "Goncangan Sedang (Perlu waspada)."
     else:
-        kekuatan = "Goncangan Lemah (Tidak terasa atau sangat halus, kondisi aman)."
+        kekuatan = "Goncangan Lemah (Kondisi aman)."
 
-    # --- 2. Kedalaman (Inferensi Kualitatif dari Kualitas Getaran) ---
-    if deviation > 0.35:
-        kedalaman = "Diduga Dangkal (Dekat dengan lokasi sensor, reaksi cepat diperlukan)."
-    else:
-        kedalaman = "Diduga Sedang/Jauh (Dampak melemah, mungkin lokasi jauh atau kedalaman besar)."
-
-    # --- 3. Jenis Pergerakan (Inferensi dari Rasio Sumbu) ---
+    # 2. Jenis Pergerakan
     horizontal_component = abs(acx) + abs(acy)
-    vertical_component = abs(acz - 1.0) 
-    
-    if horizontal_component > (vertical_component * 1.5) and deviation > 0.1:
-        pergerakan = "Dominan Horizontal (Sesar Geser/Mendatar terdeteksi)."
-    else:
-        pergerakan = "Dominan Vertikal (Sesar Naik/Turun atau Guncangan Jarak Jauh terdeteksi)."
+    vertical_component = abs(acz - 1.0)
 
-    reading['status'] = status_db
-    
+    if horizontal_component > (vertical_component * 1.5) and deviation > 0.1:
+        pergerakan = "Dominan Horizontal (Sesar Geser)."
+    else:
+        pergerakan = "Dominan Vertikal (Sesar Naik/Turun)."
+
+    reading["status"] = status_db
+
     return {
         "kekuatan_goncangan": kekuatan,
-        "kedalaman_inferensi": kedalaman,
         "jenis_pergerakan": pergerakan
     }
 
 # =======================================================
-# 4. FUNGSI KONEKSI UTILITAS
+# 3. KONEKSI UTILITAS
 # =======================================================
-
-# Inisialisasi MQTT Publisher Client
 mqttc = mqtt_client.Client(mqtt_client.CallbackAPIVersion.VERSION1, CLIENT_ID_PUBLISHER)
 
 def connect_mqtt():
@@ -89,138 +96,224 @@ def connect_mqtt():
         if rc == 0:
             print("✅ API MQTT Publisher terhubung.")
         else:
-            print(f"❌ API MQTT Publisher gagal terhubung, kode {rc}. Mencoba lagi...")
-            time.sleep(5)
-            # Tidak perlu auto-reconnect di sini, loop_start sudah menangani
-    
+            print(f"❌ Gagal MQTT, rc={rc}")
+
     mqttc.on_connect = on_connect
     try:
         mqttc.connect(MQTT_BROKER, MQTT_PORT, 60)
-        mqttc.loop_start() # Jalankan loop di background thread
+        mqttc.loop_start()
     except Exception as e:
-        print(f"❌ Gagal koneksi MQTT Publisher awal: {e}")
-        
+        print(f"❌ Gagal MQTT: {e}")
+
 connect_mqtt()
 
 def get_db_connection():
-    """Membuat koneksi DB baru. Melakukan retry jika gagal."""
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            conn = mysql.connector.connect(**DB_CONFIG)
-            return conn
-        except mysql.connector.Error as err:
-            print(f"DB Connection Error (Attempt {attempt+1}/{max_retries}): {err}")
-            if attempt < max_retries - 1:
-                time.sleep(1)
-            else:
-                raise # Lempar error setelah semua retry gagal
+    return mysql.connector.connect(**DB_CONFIG)
 
 # =======================================================
-# 5. ENDPOINTS API (MODIFIKASI)
+# 4. ENDPOINTS API
 # =======================================================
-
-@app.route('/api/latest', methods=['GET'])
+@app.route("/api/latest", methods=["GET"])
 def get_latest_reading():
-    """Mengambil record dengan status terparah dalam 5 detik terakhir (dengan retry koneksi)."""
-    conn = None
-    try:
-        conn = get_db_connection() # Menggunakan fungsi retry
-        cursor = conn.cursor(dictionary=True)
-        
-        # 1. Query untuk mengambil record terparah (deviation terbesar) dalam 5 detik terakhir.
-        query = """
-        SELECT * FROM gempa 
-        WHERE waktu >= DATE_SUB(NOW(), INTERVAL 5 SECOND)
-        ORDER BY deviation DESC, waktu DESC
-        LIMIT 1
-        """
-        cursor.execute(query)
-        record = cursor.fetchone()
-        
-        # 2. Jika tidak ada record dalam 5 detik, ambil record terakhir yang ada.
-        if not record:
-            cursor.execute("SELECT * FROM gempa ORDER BY waktu DESC LIMIT 1")
-            record = cursor.fetchone()
-
-        # 3. Tambahkan deskripsi inferensi sebelum dikirim
-        if record:
-            descriptions = infer_descriptions(record) 
-            final_data = {**record, **descriptions}
-            return jsonify(final_data)
-        else:
-            return jsonify({"message": "No data available"}), 404
-            
-    except mysql.connector.Error as err:
-        print(f"DB Error: {err}")
-        return jsonify({"error": "Database connection failed"}), 500
-    except Exception as e:
-        print(f"General Error: {e}")
-        return jsonify({"error": "Internal server error"}), 500
-    finally:
-        if conn and conn.is_connected():
-            conn.close()
-
-
-@app.route('/api/control', methods=['POST'])
-def control_actuator():
-    """
-    Mengontrol aktuator atau mematikan ESP32.
-    Perintah yang diterima: TEST_ON, TEST_OFF, SHUTDOWN.
-    """
-    data = request.json
-    command = data.get('command', '').upper()
-    
-    # Tambahkan perintah SHUTDOWN ke list valid
-    VALID_COMMANDS = ["TEST_ON", "TEST_OFF", "SHUTDOWN"]
-
-    if command in VALID_COMMANDS:
-        if mqttc.is_connected():
-            # Terbitkan perintah ke topik yang di-subscribe oleh ESP32
-            result = mqttc.publish(MQTT_TOPIC_CONTROL, command)
-            
-            if result[0] == mqtt_client.MQTT_ERR_SUCCESS:
-                print(f"[MQTT PUB] Perintah '{command}' berhasil dikirim ke {MQTT_TOPIC_CONTROL}")
-                
-                # Respon khusus untuk SHUTDOWN
-                if command == "SHUTDOWN":
-                    message = "Perintah SHUTDOWN (Deep Sleep) berhasil dikirim. Sensor akan mati total."
-                else:
-                    message = f"Perintah {command} dikirim."
-                    
-                return jsonify({"status": "SUCCESS", "message": message}), 200
-            else:
-                return jsonify({"status": "ERROR", "message": "Gagal menerbitkan pesan MQTT."}), 500
-        else:
-            print("❌ API Publisher tidak terhubung ke MQTT Broker.")
-            return jsonify({"status": "ERROR", "message": "API Publisher offline. Cek koneksi internet/broker."}), 503
-    else:
-        return jsonify({"status": "ERROR", "message": "Perintah tidak valid."}), 400
-    
-@app.route('/api/history', methods=['GET'])
-def get_historical_readings():
-    """Mengembalikan 100 record historis untuk grafik."""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        
-        query = "SELECT id, waktu, magnitude_g, deviation, status FROM gempa ORDER BY waktu DESC LIMIT 100"
-        cursor.execute(query)
-        records = cursor.fetchall()
-        
-        return jsonify(records)
-            
-    except mysql.connector.Error as err:
-        print(f"DB Error: {err}")
-        return jsonify({"error": "Database connection failed"}), 500
+
+        cursor.execute("SELECT * FROM gempa ORDER BY waktu DESC LIMIT 1")
+        record = cursor.fetchone()
+
+        if record:
+            # isi kedalaman: pakai nilai DB kalau ada, kalau NULL pakai estimasi
+            if record.get("kedalaman") is None:
+                est_depth = estimate_depth_km(
+                    record.get("magnitude_g"),
+                    record.get("deviation")
+                )
+                record["kedalaman"] = str(est_depth)
+            else:
+                record["kedalaman"] = str(record.get("kedalaman"))
+
+            # isi koordinat: pakai DB kalau ada, kalau NULL pakai posisi tetap sensor
+            record["koordinat"] = record.get("koordinat") if record.get("koordinat") is not None else DEFAULT_COORD
+
+            # tambahkan deskripsi inferensi
+            descriptions = infer_descriptions(record)
+            final_data = {**record, **descriptions}
+            return jsonify(final_data)
+        else:
+            return jsonify({"message": "No data available"}), 404
+
     except Exception as e:
         print(f"General Error: {e}")
-        return jsonify({"error": "Internal server error"}), 500
+        return jsonify({"error": "Internal server error", "details": str(e)}), 500
     finally:
         if conn and conn.is_connected():
             conn.close()
 
-if __name__ == '__main__':
-    # Jalankan server API di port 5000
-    app.run(debug=True, host='0.0.0.0', port=5000)
+@app.route("/api/history", methods=["GET"])
+def get_historical_readings():
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        query = """
+            SELECT
+                id,
+                waktu,
+                magnitude_g,
+                deviation,
+                status,
+                kedalaman,
+                koordinat
+            FROM gempa
+            ORDER BY waktu DESC
+            LIMIT 100
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+
+        cleaned = []
+        for r in rows:
+            mag = r.get("magnitude_g")
+            dev = r.get("deviation")
+
+            # kalau NULL → pakai estimasi + koordinat default
+            if r.get("kedalaman") is None:
+                r["kedalaman"] = estimate_depth_km(mag, dev)
+            if r.get("koordinat") is None:
+                r["koordinat"] = DEFAULT_COORD
+
+            cleaned.append(r)
+        return jsonify(cleaned)
+    except Exception as e:
+        print("HISTORY ERROR:", e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn and conn.is_connected():
+            conn.close()
+# ====== Statistik per jam / 2 jam ======
+@app.route("/api/stats", methods=["GET"])
+def get_stats():
+    """
+    Statistik gempa untuk window waktu tertentu.
+    query param: window_h (jam), default 1 jam.
+    """
+    window_h = request.args.get("window_h", default=1, type=int)
+    if window_h <= 0:
+        window_h = 1
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        query = """
+            SELECT
+                COUNT(*) AS total_event,
+                SUM(status = 'WARNING') AS total_warning,
+                SUM(status = 'ALERT')   AS total_alert,
+                MAX(magnitude_g) AS max_magnitude,
+                AVG(deviation)   AS avg_deviation
+            FROM gempa
+            WHERE waktu >= NOW() - INTERVAL %s HOUR
+        """
+        cursor.execute(query, (window_h,))
+        stats = cursor.fetchone()
+        # pastikan tidak None
+        for k in stats:
+            stats[k] = stats[k] if stats[k] is not None else 0
+        stats["window_h"] = window_h
+        return jsonify(stats)
+    except Exception as e:
+        print("STATS ERROR:", e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn and conn.is_connected():
+            conn.close()
+
+@app.route("/api/aftershock", methods=["GET"])
+def predict_aftershock():
+    """
+    Analisis sederhana potensi gempa susulan berdasarkan
+    tren deviation dan frekuensi WARNING dalam 30 menit terakhir.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # 30 menit terakhir
+        query = """
+            SELECT
+                waktu,
+                magnitude_g,
+                deviation,
+                status
+            FROM gempa
+            WHERE waktu >= NOW() - INTERVAL 30 MINUTE
+            ORDER BY waktu ASC
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+
+        if not rows:
+            return jsonify({
+                "level": "RENDAH",
+                "pesan": "Belum ada data 30 menit terakhir.",
+                "detail": {}
+            })
+
+        # hitung indikator
+        total = len(rows)
+        warning_count = sum(1 for r in rows if r.get("status") == "WARNING")
+        alert_count   = sum(1 for r in rows if r.get("status") == "ALERT")
+        max_dev = max(r.get("deviation") or 0 for r in rows)
+        avg_dev = sum((r.get("deviation") or 0) for r in rows) / total
+
+        # heuristik sederhana
+        if warning_count >= 5 or max_dev >= 0.45:
+            level = "TINGGI"
+            pesan = "Aktivitas getaran cukup sering dan kuat. Potensi gempa susulan relatif tinggi, tetap waspada."
+        elif warning_count >= 2 or alert_count >= 4 or avg_dev >= 0.20:
+            level = "SEDANG"
+            pesan = "Terjadi beberapa getaran signifikan. Potensi gempa susulan sedang."
+        else:
+            level = "RENDAH"
+            pesan = "Aktivitas getaran relatif tenang. Potensi gempa susulan rendah."
+
+        detail = {
+            "total_event": total,
+            "warning_count": warning_count,
+            "alert_count": alert_count,
+            "max_deviation": round(max_dev, 3),
+            "avg_deviation": round(avg_dev, 3),
+            "window_menit": 30
+        }
+
+        return jsonify({
+            "level": level,
+            "pesan": pesan,
+            "detail": detail
+        })
+    except Exception as e:
+        print("AFTERSHOCK ERROR:", e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn and conn.is_connected():
+            conn.close()
+
+@app.route("/api/control", methods=["POST"])
+def control_actuator():
+    data = request.get_json(silent=True) or {}
+    command = data.get("command")
+    if not command:
+        return jsonify({"status": "error", "message": "No command provided"}), 400
+
+    try:
+        mqttc.publish(MQTT_TOPIC_CONTROL, command)
+        return jsonify({"status": "success", "message": f"Command {command} sent"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5000)
